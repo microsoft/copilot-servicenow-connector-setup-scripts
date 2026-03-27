@@ -1,0 +1,77 @@
+# ServiceNow Knowledge — Microsoft 365 Copilot Connector Setup Scripts
+
+Background scripts that automate the ServiceNow configuration steps required for the [ServiceNow Knowledge Microsoft 365 Copilot connector](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-connector). These scripts perform the same setup you would do manually through the ServiceNow UI, but in a single run.
+
+## Scripts
+
+| Script | Purpose | Documentation Reference |
+|--------|---------|------------------------|
+| [row_level_acl_setup.js](row_level_acl_setup.js) | Creates service account, custom role, and row-level READ ACLs for all required tables | [Create service account and set up permissions](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#create-service-account-and-set-up-permissions-to-index-items) / [Grant table access](https://learn.microsoft.com/en-us/microsoftsearch/granting-table-access-servicenow) |
+| [field_level_acl_setup.js](field_level_acl_setup.js) | Creates field-level READ ACLs (`table.*`) for tables where field values are restricted | [Grant field-level access](https://learn.microsoft.com/en-us/microsoftsearch/granting-table-access-servicenow#grant-field-level-access) |
+| [scripted_rest_api_setup.js](scripted_rest_api_setup.js) | Creates the Scripted REST API endpoint for the Advanced connector flow | [Set up REST API](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#set-up-rest-api) |
+
+## Prerequisites
+
+- ServiceNow admin account with `security_admin` role elevated
+- Access to **System Definition > Scripts - Background**
+
+## How to Run
+
+1. **Elevate** your role to `security_admin` in ServiceNow.
+2. Navigate to **All > System Definition > Scripts - Background**.
+3. Copy a script file and paste it into the script editor.
+4. Review the **CONFIGURATION** section at the top of the script. Update values (role name, user ID, etc.) to match your organization's naming conventions if needed.
+5. Click **Run script**.
+6. Review the output summary to confirm all steps completed successfully.
+
+### Recommended order
+
+1. **`row_level_acl_setup.js`** — Run first. Creates the service account, role, and row-level ACLs.
+2. **Verify** — Impersonate the service account and navigate to a table (e.g., `kb_knowledge.list`). If rows are visible but field values are empty, proceed to step 3. Otherwise skip to step 4.
+3. **`field_level_acl_setup.js`** — Run only if field values are not visible after step 2.
+4. **`scripted_rest_api_setup.js`** — Run if you are using the **Advanced** connector flow (creates the user criteria REST endpoint).
+
+## Key Features
+
+- **Idempotent** — Safe to run multiple times. Existing records are reused, not duplicated.
+- **Non-destructive** — Scripts do not modify, delete, or overwrite existing records.
+- **Self-contained** — No external dependencies or network calls outside your ServiceNow instance.
+- **Cross-version compatible** — Uses `isValidField()` checks to adapt to different ServiceNow releases.
+- **Transparent** — Every action is logged in the output summary for review.
+
+## Configuration
+
+Each script has a clearly marked **CONFIGURATION** section at the top where you can customize:
+
+- **Role name** — Default: `copilot_connector`
+- **Service account user ID** — Default: `microsoft.copilot`
+- **Table lists** — Add or remove tables based on your instance requirements
+- **Optional standard roles** — `knowledge_admin`, `user_criteria_admin`, `user_admin` (included by default in the row-level script as a safety net; can be removed for minimal-permission setups)
+
+## What the Scripts Do NOT Do
+
+- They do **not** set service account passwords — the admin must set the password after running the row-level script.
+- They do **not** communicate with any service outside your ServiceNow instance.
+- They do **not** install plugins or create application scopes.
+
+## Contributing
+
+This project welcomes contributions and suggestions. Most contributions require you to agree to a
+Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
+the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
+
+When you submit a pull request, a CLA bot will automatically determine whether you need to provide
+a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
+provided by the bot. You will only need to do this once across all repos using our CLA.
+
+This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
+For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
+contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+
+## Trademarks
+
+This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft
+trademarks or logos is subject to and must follow
+[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
+Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
+Any use of third-party trademarks or logos are subject to those third-party's policies.
