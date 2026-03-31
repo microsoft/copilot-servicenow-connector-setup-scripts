@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // =================================================================================================
 // ServiceNow Background Script: Set up Scripted REST API for Microsoft 365 Copilot Connector
 // =================================================================================================

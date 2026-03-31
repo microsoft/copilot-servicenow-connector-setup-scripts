@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // =================================================================================================
 // ServiceNow Background Script: Grant field-level read access to the connector service account
 // =================================================================================================

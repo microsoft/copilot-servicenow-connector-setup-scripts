@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
 // =================================================================================================
 // ServiceNow Background Script: Create service account and grant row-level read access
 // =================================================================================================
