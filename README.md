@@ -34,7 +34,7 @@ Background scripts that automate the ServiceNow configuration steps required for
    Authenticate with the service account credentials (Basic Auth). If rows are returned with field values populated, skip to step 4. If rows are returned but field values are empty, proceed to step 3.
    > **Note:** On Zurich and later releases, the script marks the service account as a machine identity (`identity_type = machine`), which automatically enables "Web service access only". Machine identity accounts cannot be impersonated through the ServiceNow UI — use the REST API to verify access instead.
 3. **`field_level_acl_setup.js`** — Run only if field values are not visible after step 2.
-4. **`scripted_rest_api_setup.js`** — Run if you are using the **Advanced** connector flow (creates the user criteria REST endpoint).
+4. **`scripted_rest_api_setup.js`** — If your ServiceNow instance uses advanced scripts in user criteria (rather than simple user/group-based criteria), you should select the **Advanced** flow when configuring the connector in the Microsoft 365 admin center. Run this script to create the Scripted REST API endpoint that the connector calls to resolve user criteria at query time.
 
 ## Key Features
 
