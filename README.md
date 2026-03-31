@@ -6,8 +6,8 @@ Background scripts that automate the ServiceNow configuration steps required for
 
 | Script | Purpose | Documentation Reference |
 |--------|---------|------------------------|
-| [row_level_acl_setup.js](row_level_acl_setup.js) | Creates service account, custom role, and row-level READ ACLs for all required tables | [Create service account and set up permissions](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#create-service-account-and-set-up-permissions-to-index-items) / [Grant table access](https://learn.microsoft.com/en-us/microsoftsearch/granting-table-access-servicenow) |
-| [field_level_acl_setup.js](field_level_acl_setup.js) | Creates field-level READ ACLs (`table.*`) for tables where field values are restricted | [Grant field-level access](https://learn.microsoft.com/en-us/microsoftsearch/granting-table-access-servicenow#grant-field-level-access) |
+| [row_level_acl_setup.js](row_level_acl_setup.js) | Creates service account, custom role, and row-level READ ACLs for all required tables | [Create service account and set up permissions](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#create-service-account-and-set-up-permissions-to-index-items) / [Grant table access](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge) |
+| [field_level_acl_setup.js](field_level_acl_setup.js) | Creates field-level READ ACLs (`table.*`) for tables where field values are restricted | [Grant field-level access](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge#grant-field-level-access) |
 | [scripted_rest_api_setup.js](scripted_rest_api_setup.js) | Creates the Scripted REST API endpoint for the Advanced connector flow | [Set up REST API](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#set-up-rest-api) |
 
 ## Prerequisites
