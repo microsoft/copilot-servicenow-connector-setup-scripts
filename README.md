@@ -27,7 +27,12 @@ Background scripts that automate the ServiceNow configuration steps required for
 ### Recommended order
 
 1. **`row_level_acl_setup.js`** — Run first. Creates the service account, role, and row-level ACLs.
-2. **Verify** — Impersonate the service account and navigate to a table (e.g., `kb_knowledge.list`). If rows are visible but field values are empty, proceed to step 3. Otherwise skip to step 4.
+2. **Verify** — Set a password for the service account, then use a REST client (e.g., curl or Postman) to query a table as the service account:
+   ```
+   GET https://<instance>.service-now.com/api/now/table/kb_knowledge?sysparm_limit=1
+   ```
+   Authenticate with the service account credentials (Basic Auth). If rows are returned with field values populated, skip to step 4. If rows are returned but field values are empty, proceed to step 3.
+   > **Note:** On Zurich and later releases, the script marks the service account as a machine identity (`identity_type = machine`), which automatically enables "Web service access only". Machine identity accounts cannot be impersonated through the ServiceNow UI — use the REST API to verify access instead.
 3. **`field_level_acl_setup.js`** — Run only if field values are not visible after step 2.
 4. **`scripted_rest_api_setup.js`** — Run if you are using the **Advanced** connector flow (creates the user criteria REST endpoint).
 
