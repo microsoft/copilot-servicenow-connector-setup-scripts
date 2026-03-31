@@ -20,9 +20,10 @@
 // Run this script ONLY if you have already granted row-level access (either manually or via the
 // row-level setup script) and the service account can see rows but NOT field values.
 //
-// To check: impersonate the service account, navigate to a table (e.g., kb_knowledge.list),
-// and verify that both rows AND field values are visible. If rows are visible but fields show
-// as empty, run this script.
+// To check: use a REST client to query a table as the service account (e.g.,
+// GET /api/now/table/kb_knowledge?sysparm_limit=1 with Basic Auth) and verify that both
+// rows AND field values are returned. If rows are returned but fields are empty, run this script.
+// Note: On Zurich+, machine identity accounts cannot be impersonated � use the REST API.
 // =================================================================================================
 
 gs.requireSecurityAdmin();
@@ -43,8 +44,8 @@ var TARGET_ROLE_NAME = 'copilot_connector';    // Name of the role to link field
 // granted. A field-level READ ACL (table.*) is created for each table listed below.
 //
 // You can add or remove tables based on your verification results. After running the row-level
-// script, impersonate the service account and check each table — only add tables here where
-// field values are hidden.
+// script, query each table via REST API as the service account — only add tables here where
+// field values are empty in the response.
 
 var TABLES = [
   'kb_knowledge',                  // Knowledge article fields

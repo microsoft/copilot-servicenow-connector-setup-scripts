@@ -71,10 +71,10 @@
 // HOW TO VERIFY
 // --------------
 // After running, verify access:
-//   1. Impersonate the service account user.
-//   2. Navigate to each table (e.g., kb_knowledge.list) and confirm rows are visible.
-//   3. If rows are visible but field values are not, run the separate field-level ACL script.
-//
+//   1. Set a password for the service account.
+//   2. Use a REST client (e.g., curl or Postman) to query a table as the service account:
+//      GET https://<instance>.service-now.com/api/now/table/kb_knowledge?sysparm_limit=1
+//   3. If rows are returned but field values are empty, run the separate field-level ACL script.
 // =================================================================================================
 
 gs.requireSecurityAdmin();
@@ -110,7 +110,7 @@ var USER_EMAIL       = '';                                 // Email address (opt
 // However, on some instances the out-of-the-box ACL configuration may require the service account
 // to hold these standard roles for access to function correctly. They are included here by default
 // as a safety net. If you prefer a minimal-permission setup, you can remove any or all of them —
-// then verify access by impersonating the service account after running the script.
+// then verify access by querying a table via REST API as the service account after running the script.
 //
 // Note that these roles grant broader permissions than just read access:
 //   - 'knowledge_admin'       — Full KB administration (create, edit, retire, publish, delete).
@@ -477,4 +477,4 @@ if (SUMMARY.errors.length) {
 }
 
 gs.print('\nAll ACLs are linked to custom role "' + ROLE_NAME + '".');
-gs.print('Next step: Run the field-level ACL script if field values are not visible after impersonation.');
+gs.print('Next step: Run the field-level ACL script if field values are not visible when querying tables via REST API.');
