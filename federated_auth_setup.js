@@ -197,6 +197,7 @@ function getOrCreateOidcConfig() {
 
   var c = new GlideRecord('oidc_provider_configuration');
   c.addQuery('name', OIDC_CONFIG_NAME);
+  c.orderBy('sys_created_on'); // deterministic reuse if duplicates share the name
   c.setLimit(1);
   c.query();
   if (c.next()) {
@@ -246,6 +247,7 @@ function getOrCreateOidcEntity(configId) {
 
   var e = new GlideRecord(entityTable);
   e.addQuery('name', OIDC_PROVIDER_NAME);
+  e.orderBy('sys_created_on'); // deterministic reuse if duplicates share the name
   e.setLimit(1);
   e.query();
   if (e.next()) {

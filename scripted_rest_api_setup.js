@@ -50,7 +50,7 @@ var EXTERNAL_DEFAULT_ACL_NAME = 'Scripted REST External Default';
 // It takes a 'user' query parameter (a user sys_id), looks up all active user_criteria records,
 // and returns only the criteria sys_ids that match that user. Missing/invalid input returns
 // HTTP 400; unexpected errors return HTTP 500.
-// This is the exact script from the Microsoft Learn documentation:
+// This script is based on the Microsoft Learn documentation (trimmed of unused declarations):
 //   https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#set-up-rest-api
 var RESOURCE_SCRIPT = [
   "(function execute (/*RESTAPIRequest*/ request, /*RESTAPIResponse*/ response) {",
@@ -58,7 +58,6 @@ var RESOURCE_SCRIPT = [
   "   var queryParams = request.queryParams;",
   "   // Extract the 'user' sys_id, ensure it's a string or null if not provided",
   "   var userSysId = queryParams.user ? String(queryParams.user) : null;",
-  "   var result = []; // Initialize an empty array for the results",
   "   // Check if userSysId was provided",
   "   if (!userSysId) {",
   "       gs.warn(\"UserCriteriaLoader API: 'user' parameter was not provided in the request.\");",
@@ -66,8 +65,6 @@ var RESOURCE_SCRIPT = [
   "       return { \"error\": \"User sys_id is required.\" };",
   "   }",
   "   try {",
-  "       // Instantiate the UserCriteriaLoader",
-  "       var userCriteriaLoader = new sn_uc.UserCriteriaLoader();",
   "       var userCriterias = [];",
   "       var userCriteriaGr = new GlideRecord('user_criteria');",
   "       userCriteriaGr.addQuery('active', true); // Select active records. You can also add any connection scope filter if required",
@@ -77,7 +74,7 @@ var RESOURCE_SCRIPT = [
   "       }",
   "       // Call the recommended API to get only matching criteria sys_ids",
   "       var matchingCriteriaIds = sn_uc.UserCriteriaLoader.getMatchingCriteria(userSysId, userCriterias);",
-  "       // Return the array of matching criteria objects",
+  "       // Return the array of matching criteria sys_ids",
   "       return matchingCriteriaIds;",
   "   } catch (e) {",
   "       // Log any errors that occur during the process",
