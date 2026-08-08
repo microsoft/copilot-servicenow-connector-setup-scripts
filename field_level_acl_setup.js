@@ -8,7 +8,7 @@
 // PURPOSE
 // -------
 // This script automates the "Grant field-level access" steps documented at:
-//   https://learn.microsoft.com/en-us/microsoftsearch/granting-table-access-servicenow#grant-field-level-access
+//   https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge#grant-field-level-access
 //
 // After running the row-level ACL setup script, the service account can see rows in each table.
 // However, on some instances the field values within those rows may still be hidden due to
@@ -20,10 +20,11 @@
 // Run this script ONLY if you have already granted row-level access (either manually or via the
 // row-level setup script) and the service account can see rows but NOT field values.
 //
-// To check: use a REST client to query a table as the service account (e.g.,
-// GET /api/now/table/kb_knowledge?sysparm_limit=1 with Basic Auth) and verify that both
-// rows AND field values are returned. If rows are returned but fields are empty, run this script.
-// Note: On Zurich+, machine identity accounts cannot be impersonated � use the REST API.
+// To check: query a table as the service account via the REST API (the machine-identity account
+// cannot be impersonated in the UI on Zurich and later), e.g.
+// GET https://<instance>.service-now.com/api/now/table/kb_knowledge?sysparm_limit=1 — and verify
+// that both rows AND field values are returned. If rows are returned but fields are empty, run this
+// script.
 // =================================================================================================
 
 gs.requireSecurityAdmin();
@@ -44,8 +45,8 @@ var TARGET_ROLE_NAME = 'copilot_connector';    // Name of the role to link field
 // granted. A field-level READ ACL (table.*) is created for each table listed below.
 //
 // You can add or remove tables based on your verification results. After running the row-level
-// script, query each table via REST API as the service account — only add tables here where
-// field values are empty in the response.
+// script, query each table as the service account via the REST API — only add tables here where
+// field values are hidden.
 
 var TABLES = [
   'kb_knowledge',                  // Knowledge article fields
@@ -54,6 +55,16 @@ var TABLES = [
   'sys_user_group',                // User group fields
   'sys_dictionary',                // Dictionary/schema fields
   'sys_attachment',                // Attachment fields
+  'sys_properties',                // System property fields (name/value) — required for
+                                   // hierarchical permission evaluation. The connector reads
+                                   // glide.knowman.apply_article_read_criteria and
+                                   // glide.knowman.block_access_with_no_user_criteria. This grants
+                                   // field access to ALL sys_properties fields; if you need to
+                                   // restrict to just these two properties, use the granular
+                                   // per-property ACLs described in the "Set up hierarchical
+                                   // permissions" section of the Learn docs instead.
+  'kb_knowledge_block',            // Knowledge block fields
+  'm2m_kb_knowledge_to_block',     // Article-to-block M2M mapping fields
   'core_company'                   // Company record fields
 ];
 

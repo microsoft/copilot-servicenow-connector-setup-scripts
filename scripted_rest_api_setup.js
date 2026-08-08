@@ -7,7 +7,7 @@
 // PURPOSE
 // -------
 // This script automates the "Set up REST API" steps documented at:
-//   https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#set-up-rest-api
+//   https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#set-up-rest-api
 //
 // When you choose the "Advanced" flow for the ServiceNow Knowledge Copilot connector, the connector
 // needs a Scripted REST API endpoint in your ServiceNow instance to fetch user criteria. This script
@@ -21,10 +21,13 @@ gs.requireSecurityAdmin();
 // Edit these values only if your setup requires different names or a custom role.
 // For most deployments, the defaults below match the Microsoft Learn documentation exactly.
 
-var ROLE_NAME                 = '';                          // Role to grant execute access.
-                                                            // Leave empty to use the built-in 'admin' role.
-                                                            // Set to a custom role name (e.g., 'copilot_connector')
-                                                            // if you created a dedicated crawling account role.
+var ROLE_NAME                 = 'copilot_connector';         // Role to grant execute access on the endpoint.
+                                                            // Defaults to 'copilot_connector' — the SAME role the
+                                                            // row-level & field-level ACL scripts grant to the crawl
+                                                            // account, so the connector's service account can call
+                                                            // this endpoint. Set to '' to fall back to the built-in
+                                                            // 'admin' role (NOT recommended: the crawl account is
+                                                            // intentionally not an admin).
 
 var ACL_NAME                  = 'Microsoft Copilot';        // Name of the ACL to create.
                                                             // Must be "Microsoft Copilot" per the docs.
@@ -44,13 +47,44 @@ var EXTERNAL_DEFAULT_ACL_NAME = 'Scripted REST External Default';
                                                             // by name — it does NOT create it.
 
 // The script that the resource will execute when called.
-// It takes a 'user' query parameter and returns all user criteria sys_ids for that user.
-// This is the exact script from the Microsoft Learn documentation.
+// It takes a 'user' query parameter (a user sys_id), looks up all active user_criteria records,
+// and returns only the criteria sys_ids that match that user. Missing/invalid input returns
+// HTTP 400; unexpected errors return HTTP 500.
+// This script is based on the Microsoft Learn documentation (trimmed of unused declarations):
+//   https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#set-up-rest-api
 var RESOURCE_SCRIPT = [
   "(function execute (/*RESTAPIRequest*/ request, /*RESTAPIResponse*/ response) {",
-  "  var queryParams = request.queryParams;",
-  "  var user = new String(queryParams.user);",
-  "  return (new sn_uc.UserCriteriaLoader()).getAllUserCriteria(user);",
+  "   // Get query parameters from the request",
+  "   var queryParams = request.queryParams;",
+  "   // Extract the 'user' sys_id, ensure it's a string or null if not provided",
+  "   var userSysId = queryParams.user ? String(queryParams.user) : null;",
+  "   // Check if userSysId was provided",
+  "   if (!userSysId) {",
+  "       gs.warn(\"UserCriteriaLoader API: 'user' parameter was not provided in the request.\");",
+  "       response.setStatus(400);",
+  "       return { \"error\": \"User sys_id is required.\" };",
+  "   }",
+  "   try {",
+  "       var userCriterias = [];",
+  "       var userCriteriaGr = new GlideRecord('user_criteria');",
+  "       userCriteriaGr.addQuery('active', true); // Select active records. You can also add any connection scope filter if required",
+  "       userCriteriaGr.query();",
+  "       while (userCriteriaGr.next()) {",
+  "           userCriterias.push(userCriteriaGr.getUniqueValue());",
+  "       }",
+  "       // Call the recommended API to get only matching criteria sys_ids",
+  "       var matchingCriteriaIds = sn_uc.UserCriteriaLoader.getMatchingCriteria(userSysId, userCriterias);",
+  "       // Return the array of matching criteria sys_ids",
+  "       return matchingCriteriaIds;",
+  "   } catch (e) {",
+  "       // Log any errors that occur during the process",
+  "       gs.error(\"UserCriteriaLoader API: Error processing user criteria for user \" + userSysId + \". Error: \" + e.message);",
+  "       response.setStatus(500); // Internal Server Error",
+  "       return {",
+  "           error_message: \"Error processing user criteria for user \" + userSysId,",
+  "           error_details: e.message",
+  "       };",
+  "   }",
   "})(request, response);"
 ].join("\n");
 
@@ -240,10 +274,14 @@ function buildAclList(copilotAclId, externalDefaultAclId) {
 }
 
 // =================================================================================================
-// STEP 5: CREATE the Scripted REST API definition
+// STEP 5: CREATE or REUSE the Scripted REST API definition
 // =================================================================================================
 // Creates a new record in sys_ws_definition with:
 //   Name: "Microsoft Copilot"  |  API ID: "microsoft_copilot"  |  Active: true
+//
+// Idempotent: if one or more APIs named "Microsoft Copilot" already exist, the oldest is reused
+// (never duplicated). If more than one exists, the extras are flagged for manual cleanup, and a
+// mismatched API ID (endpoint URL segment) is reported so you can fix it.
 //
 // The API ID field name varies across ServiceNow versions:
 //   - 'service_id' (most common, label "API ID")
@@ -252,32 +290,61 @@ function buildAclList(copilotAclId, externalDefaultAclId) {
 // The script probes for each in order and uses the first one found.
 
 function getOrCreateScriptedApi(apiName, apiIdValue) {
-  var d = new GlideRecord('sys_ws_definition');
-  d.addQuery('name', apiName);
-  d.query();
-  if (d.next()) {
-    SUMMARY.api = 'API reused: ' + apiName + ' (' + d.sys_id + ')';
+  // Find ALL definitions with this name (oldest first) so duplicates are detected, not created.
+  var matches = [];
+  var probe = new GlideRecord('sys_ws_definition');
+  probe.addQuery('name', apiName);
+  probe.orderBy('sys_created_on');
+  probe.query();
+  while (probe.next()) matches.push(probe.sys_id.toString());
+
+  if (matches.length) {
+    var d = new GlideRecord('sys_ws_definition');
+    d.get(matches[0]); // reuse the oldest match deterministically — never duplicate
+
+    if (matches.length > 1) {
+      SUMMARY.manualActions.push(
+        'Found ' + matches.length + ' Scripted REST APIs named "' + apiName + '". ' +
+        'Reusing the oldest (' + matches[0] + '). Review and delete the duplicate(s): ' +
+        matches.slice(1).join(', ')
+      );
+    }
+
+    // Drift check on the API ID (the endpoint URL segment). Warn only — changing it would alter the
+    // endpoint URL and could collide with a duplicate's unique API ID, so it is not auto-changed.
+    var idField = d.isValidField('service_id') ? 'service_id' : (d.isValidField('api_id') ? 'api_id' : null);
+    if (idField && d.getValue(idField) !== apiIdValue) {
+      SUMMARY.manualActions.push(
+        'API "' + apiName + '" has ' + idField + ' = "' + d.getValue(idField) + '" but expected "' + apiIdValue +
+        '". Endpoint URL may be wrong — verify and fix manually (not auto-changed to avoid URL/uniqueness issues).'
+      );
+    }
+
+    SUMMARY.api = 'API reused: ' + apiName + ' (' + d.sys_id + ')' +
+                  (matches.length > 1 ? ' [' + matches.length + ' duplicates found]' : '');
     return d;
   }
 
-  d.initialize();
-  d.name   = apiName;
-  d.active = true;
+  // None found — create a fresh definition.
+  var n = new GlideRecord('sys_ws_definition');
+  n.initialize();
+  n.name   = apiName;
+  n.active = true;
 
   // Set the API ID using the first valid field name found
-  if (d.isValidField('service_id'))       d.service_id = apiIdValue;
-  else if (d.isValidField('api_id'))      d.api_id     = apiIdValue;
-  else if (d.isValidField('base_uri'))    d.base_uri   = '/' + apiIdValue;
-  else if (d.isValidField('base_path'))   d.base_path  = '/' + apiIdValue;
+  if (n.isValidField('service_id'))       n.service_id = apiIdValue;
+  else if (n.isValidField('api_id'))      n.api_id     = apiIdValue;
+  else if (n.isValidField('base_uri'))    n.base_uri   = '/' + apiIdValue;
+  else if (n.isValidField('base_path'))   n.base_path  = '/' + apiIdValue;
   else SUMMARY.manualActions.push('Set API identifier manually in UI for "' + apiName + '".');
 
-  if (d.isValidField('requires_authentication')) d.requires_authentication = true;
+  if (n.isValidField('requires_authentication')) n.requires_authentication = true;
 
-  var id = d.insert();
+  var id = n.insert();
   if (!id) throw 'Failed to create Scripted REST API: ' + apiName;
-  d.get(id);
+  n.get(id);
   SUMMARY.api = 'API created: ' + apiName + ' (' + id + ')';
-  return d;
+  return n;
 }
 
 // =================================================================================================
@@ -319,11 +386,15 @@ function setApiDefaultAcls(defGR, aclListStr) {
 }
 
 // =================================================================================================
-// STEP 7: CREATE the API resource (GetAllUserCriteria)
+// STEP 7: CREATE or UPDATE the API resource (GetAllUserCriteria)
 // =================================================================================================
 // Creates a GET resource at /user_criteria under the Scripted REST API.
 // The resource is stored in either sys_ws_resource or sys_ws_operation depending on the
 // ServiceNow version. The script checks which table exists and uses the appropriate one.
+//
+// Idempotent: if the resource already exists under this API, its script and settings are compared
+// against the values below and updated IN PLACE only when they differ — the resource is never
+// duplicated. If it is already current, nothing is changed. Extra duplicates are flagged.
 //
 // Configuration set on the resource:
 //   - HTTP method: GET
@@ -340,20 +411,79 @@ function createResourceOrOperation(defGR, resName, relPath, scriptBody) {
   }
 
   var tbl = useRes ? 'sys_ws_resource' : 'sys_ws_operation';
-  var r = new GlideRecord(tbl);
 
-  // Check if a resource with this name already exists under this API
+  function boolTrue(v) { return v == '1' || v == 'true'; }
+  function scriptFieldOf(gr) {
+    if (gr.isValidField('operation_script')) return 'operation_script';
+    if (gr.isValidField('script'))           return 'script';
+    return null;
+  }
+
+  // Look for an existing resource with this name under this API.
+  // NOTE: we match on name only (not path) so an existing resource is UPDATED in place rather than
+  // duplicated if its relative path changed. Oldest first for deterministic selection.
+  var r = new GlideRecord(tbl);
   r.addQuery('web_service_definition', defGR.sys_id);
-  if (r.isValidField('name'))           r.addQuery('name', resName);
-  if (r.isValidField('relative_path'))  r.addQuery('relative_path', relPath);
-  else if (r.isValidField('http_path')) r.addQuery('http_path', relPath);
+  if (r.isValidField('name')) r.addQuery('name', resName);
+  r.orderBy('sys_created_on');
   r.query();
+
   if (r.next()) {
-    SUMMARY.resource = 'Resource reused in ' + tbl + ' (' + r.sys_id + ')';
+    // -------- EXISTING resource: check for drift and update in place (never duplicate) --------
+    var changes = [];
+    var sf = scriptFieldOf(r);
+
+    // 1. Script — compare (ignoring CRLF/LF differences) and update ONLY if it actually changed.
+    if (sf) {
+      var currentScript = (r.getValue(sf) || '').replace(/\r\n/g, '\n');
+      if (currentScript !== scriptBody) {
+        r.setValue(sf, scriptBody);
+        changes.push('script');
+      }
+    } else {
+      SUMMARY.manualActions.push('Paste resource script in UI (script field not accessible).');
+    }
+
+    // 2. Relative path
+    if (r.isValidField('relative_path')) {
+      if (r.getValue('relative_path') !== relPath) { r.relative_path = relPath; changes.push('relative_path'); }
+    } else if (r.isValidField('http_path')) {
+      if (r.getValue('http_path') !== relPath) { r.http_path = relPath; changes.push('http_path'); }
+    }
+
+    // 3. Method + security flags — self-heal to the required values
+    if (r.isValidField('http_method') && r.getValue('http_method') !== 'GET') { r.http_method = 'GET'; changes.push('http_method'); }
+    if (r.isValidField('requires_authentication')    && !boolTrue(r.getValue('requires_authentication')))    { r.requires_authentication = true;    changes.push('requires_authentication'); }
+    if (r.isValidField('requires_acl_authorization') && !boolTrue(r.getValue('requires_acl_authorization'))) { r.requires_acl_authorization = true; changes.push('requires_acl_authorization'); }
+    if (r.isValidField('requires_acl')               && !boolTrue(r.getValue('requires_acl')))               { r.requires_acl = true;               changes.push('requires_acl'); }
+    if (r.isValidField('active')                     && !boolTrue(r.getValue('active')))                     { r.active = true;                     changes.push('active'); }
+
+    if (changes.length) {
+      r.update();
+      SUMMARY.resource = 'Resource updated in ' + tbl + ' (' + r.sys_id + ') — changed: ' + changes.join(', ');
+    } else {
+      SUMMARY.resource = 'Resource already up to date in ' + tbl + ' (' + r.sys_id + ') — no changes';
+    }
+
+    // Flag any additional duplicate resources of the same name under this API.
+    var dupCount = 0;
+    var dup = new GlideRecord(tbl);
+    dup.addQuery('web_service_definition', defGR.sys_id);
+    if (dup.isValidField('name')) dup.addQuery('name', resName);
+    dup.addQuery('sys_id', '!=', r.sys_id.toString());
+    dup.query();
+    while (dup.next()) dupCount++;
+    if (dupCount) {
+      SUMMARY.manualActions.push(
+        'Found ' + (dupCount + 1) + ' "' + resName + '" resources under this API. ' +
+        'Updated one; review and delete the ' + dupCount + ' duplicate(s).'
+      );
+    }
     return r;
   }
 
-  // Create new resource
+  // -------- No existing resource: create a new one --------
+  r = new GlideRecord(tbl);
   r.initialize();
   if (r.isValidField('web_service_definition')) r.web_service_definition = defGR.sys_id;
   if (r.isValidField('name'))           r.name = resName;
@@ -371,9 +501,9 @@ function createResourceOrOperation(defGR, resName, relPath, scriptBody) {
   // NOTE: The 'enforce_acl' field is a glide_list for ACL references (not a boolean).
   // ACL assignment is handled separately in Step 8 via setResourceAcls().
 
-  // Resource script — the field name varies: 'script' or 'operation_script'
-  if (r.isValidField('script'))                r.script = scriptBody;
-  else if (r.isValidField('operation_script')) r.operation_script = scriptBody;
+  // Resource script — the field name varies: 'operation_script' (modern) or 'script'.
+  var sfNew = scriptFieldOf(r);
+  if (sfNew) r.setValue(sfNew, scriptBody);
   else SUMMARY.manualActions.push('Paste resource script in UI (script field not accessible).');
 
   var id = r.insert();

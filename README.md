@@ -1,14 +1,15 @@
 # ServiceNow Knowledge — Microsoft 365 Copilot Connector Setup Scripts
 
-Background scripts that automate the ServiceNow configuration steps required for the [ServiceNow Knowledge Microsoft 365 Copilot connector](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-connector). These scripts perform the same setup you would do manually through the ServiceNow UI, but in a single run.
+Background scripts that automate the ServiceNow configuration steps required for the [ServiceNow Knowledge Microsoft 365 Copilot connector](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-overview). These scripts perform the same setup you would do manually through the ServiceNow UI, but in a single run.
 
 ## Scripts
 
 | Script | Purpose | Documentation Reference |
 |--------|---------|------------------------|
-| [row_level_acl_setup.js](row_level_acl_setup.js) | Creates service account, custom role, and row-level READ ACLs for all required tables | [Create service account and set up permissions](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#create-service-account-and-set-up-permissions-to-index-items) / [Grant table access](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge) |
+| [federated_auth_setup.js](federated_auth_setup.js) | *(Federated Auth deployments only)* Configures OIDC: the provider configuration, the Application Registry entity, the `useraccount` auth scope, and the machine integration user | [Federated Auth (Federated Identity Credentials)](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-deployment#federated-auth-federated-identity-credentials) |
+| [row_level_acl_setup.js](row_level_acl_setup.js) | Creates service account, custom role, and row-level READ ACLs for all required tables | [Create service account and set up permissions](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#create-service-account-and-set-up-permissions-to-index-items) / [Grant table access](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge) |
 | [field_level_acl_setup.js](field_level_acl_setup.js) | Creates field-level READ ACLs (`table.*`) for tables where field values are restricted | [Grant field-level access](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge#grant-field-level-access) |
-| [scripted_rest_api_setup.js](scripted_rest_api_setup.js) | Creates the Scripted REST API endpoint for the Advanced connector flow | [Set up REST API](https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#set-up-rest-api) |
+| [scripted_rest_api_setup.js](scripted_rest_api_setup.js) | Creates the Scripted REST API endpoint for the Advanced connector flow | [Set up REST API](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#set-up-rest-api) |
 
 ## Prerequisites
 
@@ -26,7 +27,9 @@ Background scripts that automate the ServiceNow configuration steps required for
 
 ### Recommended order
 
-1. **`row_level_acl_setup.js`** — Run first. Creates the service account, role, and row-level ACLs.
+> **Using Federated Auth?** If you authenticate the connector with the **Federated Auth (Federated Identity Credentials)** option, run **`federated_auth_setup.js`** first. It creates the machine integration user (keyed by the service principal object ID) that the connector crawls as. Then set that same object ID as `USER_ID` in step 1 so the read role and ACLs are assigned to that integration user. For Basic auth or OAuth 2.0, skip this script and use a service account user ID such as `microsoft.copilot`.
+
+1. **`row_level_acl_setup.js`** — Run first. Creates the service account (or reuses the Federated Auth integration user), role, and row-level ACLs. Set `USER_ID` in the CONFIGURATION section before running — it is required (no default).
 2. **Verify** — Set a password for the service account, then use a REST client (e.g., curl or Postman) to query a table as the service account:
    ```
    GET https://<instance>.service-now.com/api/now/table/kb_knowledge?sysparm_limit=1
@@ -49,7 +52,8 @@ Background scripts that automate the ServiceNow configuration steps required for
 Each script has a clearly marked **CONFIGURATION** section at the top where you can customize:
 
 - **Role name** — Default: `copilot_connector`
-- **Service account user ID** — Default: `microsoft.copilot`
+- **Service account user ID** (`USER_ID`) — Required, no default. Use a service account name such as `microsoft.copilot` for Basic auth / OAuth 2.0, or the service principal object ID for Federated Auth.
+- **Federated Auth values** (`federated_auth_setup.js`) — Service principal object ID and Microsoft Entra tenant ID (both required to run that script).
 - **Table lists** — Add or remove tables based on your instance requirements
 - **Optional standard roles** — `knowledge_admin`, `user_criteria_admin`, `user_admin` (included by default in the row-level script as a safety net; can be removed for minimal-permission setups)
 
