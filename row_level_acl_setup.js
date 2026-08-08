@@ -9,8 +9,8 @@
 // -------
 // This script automates the "Create service account and set up permissions to index items" steps
 // documented at:
-//   https://learn.microsoft.com/en-us/microsoftsearch/servicenow-knowledge-admin-setup#create-service-account-and-set-up-permissions-to-index-items
-//   https://learn.microsoft.com/en-us/microsoftsearch/granting-table-access-servicenow
+//   https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#create-service-account-and-set-up-permissions-to-index-items
+//   https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge
 //
 // The ServiceNow Knowledge Microsoft 365 Copilot connector requires a service account with read
 // access to specific tables. This script creates that account, assigns the required role, and
@@ -70,11 +70,13 @@
 //
 // HOW TO VERIFY
 // --------------
-// After running, verify access:
-//   1. Set a password for the service account.
-//   2. Use a REST client (e.g., curl or Postman) to query a table as the service account:
+// After running, verify access via the REST API (the service account is a machine identity and
+// cannot be impersonated in the UI on Zurich and later releases):
+//   1. Set a password for the service account, then query the Table API as that account, e.g.:
 //      GET https://<instance>.service-now.com/api/now/table/kb_knowledge?sysparm_limit=1
+//   2. Confirm rows are returned in the response.
 //   3. If rows are returned but field values are empty, run the separate field-level ACL script.
+//
 // =================================================================================================
 
 gs.requireSecurityAdmin();
@@ -92,25 +94,37 @@ var ROLE_NAME        = 'copilot_connector';              // Name of the custom r
 
 var ROLE_DESC        = 'Read access role for Microsoft 365 Copilot Knowledge connector';
 
-var USER_ID          = 'microsoft.copilot';               // User ID (user_name) for the service account.
-                                                          // Must not contain spaces or special characters
-                                                          // as it is used in authentication flows.
+var USER_ID          = '';   // REQUIRED — no default. User ID (user_name) of the account that the
+                             // connector is AUTHORIZED AS at crawl time. The read role and ACLs this
+                             // script creates are assigned to THIS user, so it must be the account
+                             // the connector actually crawls as. Set it per your auth method:
+                             //   - Basic auth / OAuth 2.0:      use 'microsoft.copilot' (or your own
+                             //                                  crawling service account name).
+                             //   - Federated Auth / Entra OIDC: use the SERVICE PRINCIPAL OBJECT ID.
+                             //                                  Run federated_auth_setup.js FIRST (it
+                             //                                  creates the integration user keyed by
+                             //                                  that SP object ID), then put the same
+                             //                                  value here so read access lands on the
+                             //                                  integration user the connector maps to.
+                             // The script fails fast (see EXECUTE) if this is left empty.
+                             // Must not contain spaces or special characters (used in auth flows).
 
-var USER_FIRST_NAME  = 'Microsoft';                       // First name for the service account.
-var USER_LAST_NAME   = 'Copilot';                         // Last name for the service account.
-var USER_EMAIL       = '';                                 // Email address (optional).
-                                                          // Set this if your organization requires it.
+var USER_FIRST_NAME  = 'Microsoft';   // First/last name and email are applied ONLY when this script
+var USER_LAST_NAME   = 'Copilot';     // CREATES a new user. If the user already exists (for example,
+var USER_EMAIL       = '';            // the integration user created by federated_auth_setup.js), it
+                                      // is reused as-is and these three values are ignored.
 
 // =================================================================================================
 // CONFIGURATION: Optional standard roles
 // =================================================================================================
-// These standard roles are OPTIONAL. The custom role + per-table ACLs created by this script
-// already provide the read access the connector needs for the documented setup.
+// These standard roles are OPTIONAL but are ENABLED BY DEFAULT as a safety net. On some instances
+// the out-of-the-box ACL configuration requires the service account to hold one or more of them for
+// access to function correctly. Per the Microsoft Learn docs, assigning these roles is optional.
 //
-// However, on some instances the out-of-the-box ACL configuration may require the service account
-// to hold these standard roles for access to function correctly. They are included here by default
-// as a safety net. If you prefer a minimal-permission setup, you can remove any or all of them —
-// then verify access by querying a table via REST API as the service account after running the script.
+// If you prefer a minimal-permission (least-privilege) setup, comment out any or all of the roles
+// below and re-run — the custom role + per-table ACLs created by this script already provide the
+// read access the connector needs for the documented setup. After removing them, verify access via
+// the REST API to confirm the service account can still read every required table.
 //
 // Note that these roles grant broader permissions than just read access:
 //   - 'knowledge_admin'       — Full KB administration (create, edit, retire, publish, delete).
@@ -118,9 +132,30 @@ var USER_EMAIL       = '';                                 // Email address (opt
 //   - 'user_admin'            — Full user administration.
 
 var STANDARD_ROLES_TO_ADD = [
-  'knowledge_admin',
-  'user_criteria_admin',
-  'user_admin'
+  'knowledge_admin',       // Optional — comment out this line to skip assigning this role.
+  'user_criteria_admin',   // Optional — comment out this line to skip assigning this role.
+  'user_admin'             // Optional — comment out this line to skip assigning this role.
+];
+
+// =================================================================================================
+// CONFIGURATION: Optional HR Service Delivery (HRSD) roles
+// =================================================================================================
+// Only relevant if your instance uses the HR Service Delivery module with knowledge bases in the
+// "Human Resources: Core" (sn_hr_core) application scope. Without one of these roles, the service
+// account can query the global-scope user_criteria table but HR-scoped user criteria rows are
+// silently filtered out — which can cause sensitive HR articles to be indexed as accessible to
+// ALL users (oversharing). See the Microsoft Learn docs:
+//   "Additional roles for HR Service Delivery (HRSD) content".
+//
+// Assign ONE of the following (they are independent — neither contains the other):
+//   - 'sn_hr_core.content_reader' — minimum-privilege; satisfies the HR Core-scoped ACL on
+//                                   the user_criteria table.
+//   - 'sn_hr_core.admin'          — broader; scope-level admin access to all HR Core data.
+//
+// Default is empty (no HRSD roles). If your instance has sn_hr_core knowledge bases, uncomment
+// the minimum-privilege role below (or add 'sn_hr_core.admin' if you prefer scope-level access).
+var HRSD_ROLES_TO_ADD = [
+  // 'sn_hr_core.content_reader'
 ];
 
 // =================================================================================================
@@ -142,19 +177,24 @@ var CORE_TABLES = [
   'sys_user',                      // Read user table
   'sys_user_group',                // Read user group segments
   'sys_user_role',                 // Read user roles
-  'sys_user_grmember',             // Read group membership of users
   'sys_user_has_role',             // Read role information of users
   'sys_attachment',                // Crawl attachments to knowledge articles
   'kb_feedback',                   // Crawl comments on knowledge articles
   'sys_properties',                // Read properties (for hierarchical permission evaluation)
   'sys_db_object',                 // Read extended table details for templates
-  'sys_dictionary'                 // Read extended table properties and crawl templates
+  'sys_dictionary',                // Read extended table properties and crawl templates
+  'kb_knowledge_block',            // Read knowledge block records (content, user criteria, metadata)
+  'm2m_kb_knowledge_to_block'      // Read M2M mapping that links articles to embedded blocks
 ];
 
 // Tables required ONLY for the "simple" connector flow.
 // If you are using the "advanced" flow exclusively, you may remove these.
 // Including them when not needed is harmless (extra ACLs do not affect other users).
+// Per the Microsoft Learn docs, these tables (marked ** in the doc) are needed only when
+// reading user criteria via the simple flow; advanced flow resolves user criteria through
+// the Scripted REST API instead and does not require direct read access to them.
 var SIMPLE_FLOW_TABLES = [
+  'sys_user_grmember',             // Read group membership of users
   'cmn_department',                // Read department information
   'cmn_location',                  // Read location information
   'core_company'                   // Read company attributes
@@ -423,6 +463,15 @@ function processTableAcls(tables, roleId) {
 // =================================================================================================
 
 try {
+  // Precheck: USER_ID is required. Background scripts run non-interactively, so instead of
+  // prompting we fail fast with guidance rather than provisioning an unintended account.
+  if (!USER_ID) {
+    throw 'USER_ID is empty. Set it in the CONFIGURATION section before running:\n' +
+          '  - Basic auth / OAuth 2.0:      "microsoft.copilot" (or your crawling account name)\n' +
+          '  - Federated Auth / Entra OIDC: the service principal object ID (run ' +
+          'federated_auth_setup.js first, then reuse that same integration user here).';
+  }
+
   // Step 1: Create or reuse the custom role
   var roleId = getOrCreateRole(ROLE_NAME, ROLE_DESC);
 
@@ -435,6 +484,9 @@ try {
 
   // Step 4 (Optional): Map standard roles if configured
   mapStandardRoles(userId, STANDARD_ROLES_TO_ADD);
+
+  // Step 4b (Optional): Map HR Service Delivery (HRSD) roles if configured
+  mapStandardRoles(userId, HRSD_ROLES_TO_ADD);
 
   // Step 5: Create/reuse row-level READ ACLs and link them to the custom role
   processTableAcls(TABLES, roleId);
@@ -477,4 +529,7 @@ if (SUMMARY.errors.length) {
 }
 
 gs.print('\nAll ACLs are linked to custom role "' + ROLE_NAME + '".');
-gs.print('Next step: Run the field-level ACL script if field values are not visible when querying tables via REST API.');
+gs.print('Role assigned to user: "' + USER_ID + '" (the account the connector crawls as).');
+gs.print('Next step: Verify access via the REST API (query a table as the service account). If rows ' +
+         'return but field values are empty, run the field-level ACL script. NOTE: machine-identity ' +
+         'accounts (Zurich+) cannot be impersonated in the UI — use the REST API to verify.');
