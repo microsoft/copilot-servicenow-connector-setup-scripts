@@ -107,7 +107,7 @@ var USER_ID          = '';   // REQUIRED — no default. User ID (user_name) of 
                              //                                  value here so read access lands on the
                              //                                  integration user the connector maps to.
                              // The script fails fast (see EXECUTE) if this is left empty.
-                             // Must not contain spaces or special characters (used in auth flows).
+                             // Must not contain spaces (GUIDs with hyphens are valid for Federated Auth).
 
 var USER_FIRST_NAME  = 'Microsoft';   // First/last name and email are applied ONLY when this script
 var USER_LAST_NAME   = 'Copilot';     // CREATES a new user. If the user already exists (for example,
