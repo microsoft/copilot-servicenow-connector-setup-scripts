@@ -11,7 +11,8 @@
 //
 // When you choose the "Advanced" flow for the ServiceNow Knowledge Copilot connector, the connector
 // needs a Scripted REST API endpoint in your ServiceNow instance to fetch user criteria. This script
-// creates that endpoint and configures all required security settings in a single run.
+// creates the GetAllUserCriteriaV2 resource (POST /user_criteria_v2) and configures all required
+// security settings in a single run.
 
 gs.requireSecurityAdmin();
 
@@ -36,10 +37,11 @@ var API_NAME                  = 'Microsoft Copilot';        // Display name of t
 
 var API_ID_VALUE              = 'microsoft_copilot';        // API ID used in the endpoint URL path.
                                                             // The final URL will be:
-                                                            // /api/<namespace>/microsoft_copilot/user_criteria
+                                                            // /api/<namespace>/microsoft_copilot/user_criteria_v2
 
-var RESOURCE_NAME             = 'GetAllUserCriteria';       // Name of the API resource.
-var RESOURCE_PATH             = '/user_criteria';           // Relative path appended to the API base path.
+var RESOURCE_NAME             = 'GetAllUserCriteriaV2';     // Name of the API resource.
+var RESOURCE_PATH             = '/user_criteria_v2';        // Relative path appended to the API base path.
+var RESOURCE_METHOD           = 'POST';                     // HTTP method the connector uses to call the resource.
 
 var EXTERNAL_DEFAULT_ACL_NAME = 'Scripted REST External Default';
                                                             // Name of the out-of-the-box ACL that ships with
@@ -47,44 +49,43 @@ var EXTERNAL_DEFAULT_ACL_NAME = 'Scripted REST External Default';
                                                             // by name — it does NOT create it.
 
 // The script that the resource will execute when called.
-// It takes a 'user' query parameter (a user sys_id), looks up all active user_criteria records,
-// and returns only the criteria sys_ids that match that user. Missing/invalid input returns
-// HTTP 400; unexpected errors return HTTP 500.
-// This script is based on the Microsoft Learn documentation (trimmed of unused declarations):
+// The connector sends a POST body with "users" (array of user sys_ids) and "user_criteria"
+// (array of user_criteria sys_ids applied to the articles being indexed). For each user, the
+// resource returns the subset of those criteria that the user matches, evaluating multiple users
+// in a single request. Empty "users" or "user_criteria" returns HTTP 400; unexpected errors
+// return HTTP 500. This script matches the Microsoft Learn documentation:
 //   https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#set-up-rest-api
 var RESOURCE_SCRIPT = [
-  "(function execute (/*RESTAPIRequest*/ request, /*RESTAPIResponse*/ response) {",
-  "   // Get query parameters from the request",
-  "   var queryParams = request.queryParams;",
-  "   // Extract the 'user' sys_id, ensure it's a string or null if not provided",
-  "   var userSysId = queryParams.user ? String(queryParams.user) : null;",
-  "   // Check if userSysId was provided",
-  "   if (!userSysId) {",
-  "       gs.warn(\"UserCriteriaLoader API: 'user' parameter was not provided in the request.\");",
-  "       response.setStatus(400);",
-  "       return { \"error\": \"User sys_id is required.\" };",
-  "   }",
-  "   try {",
-  "       var userCriterias = [];",
-  "       var userCriteriaGr = new GlideRecord('user_criteria');",
-  "       userCriteriaGr.addQuery('active', true); // Select active records. You can also add any connection scope filter if required",
-  "       userCriteriaGr.query();",
-  "       while (userCriteriaGr.next()) {",
-  "           userCriterias.push(userCriteriaGr.getUniqueValue());",
-  "       }",
-  "       // Call the recommended API to get only matching criteria sys_ids",
-  "       var matchingCriteriaIds = sn_uc.UserCriteriaLoader.getMatchingCriteria(userSysId, userCriterias);",
-  "       // Return the array of matching criteria sys_ids",
-  "       return matchingCriteriaIds;",
-  "   } catch (e) {",
-  "       // Log any errors that occur during the process",
-  "       gs.error(\"UserCriteriaLoader API: Error processing user criteria for user \" + userSysId + \". Error: \" + e.message);",
-  "       response.setStatus(500); // Internal Server Error",
-  "       return {",
-  "           error_message: \"Error processing user criteria for user \" + userSysId,",
-  "           error_details: e.message",
-  "       };",
-  "   }",
+  "(function execute(/*RESTAPIRequest*/ request, /*RESTAPIResponse*/ response) {",
+  "    try {",
+  "        var requestBody = request.body.data;",
+  "        var users = requestBody.users || [];",
+  "        var userCriterias = requestBody.user_criteria || [];",
+  "        if (users.length === 0) {",
+  "            response.setStatus(400);",
+  "            return { error: \"At least one user sys_id is required.\" };",
+  "        }",
+  "        if (userCriterias.length === 0) {",
+  "            response.setStatus(400);",
+  "            return { error: \"At least one user_criteria sys_id is required.\" };",
+  "        }",
+  "        var result = [];",
+  "        for (var i = 0; i < users.length; i++) {",
+  "            var userSysId = String(users[i]);",
+  "            try {",
+  "                var matchingCriteriaIds = sn_uc.UserCriteriaLoader.getMatchingCriteria(userSysId, userCriterias);",
+  "                result.push({ user: userSysId, user_criteria: matchingCriteriaIds });",
+  "            } catch (userError) {",
+  "                result.push({ user: userSysId, error: userError.message });",
+  "                gs.error(\"Error evaluating user criteria for user \" + userSysId + \": \" + userError.message);",
+  "            }",
+  "        }",
+  "        return result;",
+  "    } catch (e) {",
+  "        gs.error(\"UserCriteriaLoader API Error: \" + e.message);",
+  "        response.setStatus(500);",
+  "        return { error_message: \"Error processing request\", error_details: e.message };",
+  "    }",
   "})(request, response);"
 ].join("\n");
 
@@ -386,9 +387,9 @@ function setApiDefaultAcls(defGR, aclListStr) {
 }
 
 // =================================================================================================
-// STEP 7: CREATE or UPDATE the API resource (GetAllUserCriteria)
+// STEP 7: CREATE or UPDATE the API resource (GetAllUserCriteriaV2)
 // =================================================================================================
-// Creates a GET resource at /user_criteria under the Scripted REST API.
+// Creates a POST resource at /user_criteria_v2 under the Scripted REST API.
 // The resource is stored in either sys_ws_resource or sys_ws_operation depending on the
 // ServiceNow version. The script checks which table exists and uses the appropriate one.
 //
@@ -397,12 +398,12 @@ function setApiDefaultAcls(defGR, aclListStr) {
 // duplicated. If it is already current, nothing is changed. Extra duplicates are flagged.
 //
 // Configuration set on the resource:
-//   - HTTP method: GET
+//   - HTTP method: POST
 //   - Requires authentication: true
 //   - Requires ACL authorization: true
 //   - Script: the user criteria lookup script from the Microsoft Learn documentation
 
-function createResourceOrOperation(defGR, resName, relPath, scriptBody) {
+function createResourceOrOperation(defGR, resName, relPath, httpMethod, scriptBody) {
   var useRes = tableExists('sys_ws_resource');
   var useOp  = tableExists('sys_ws_operation');
   if (!useRes && !useOp) {
@@ -452,7 +453,7 @@ function createResourceOrOperation(defGR, resName, relPath, scriptBody) {
     }
 
     // 3. Method + security flags — self-heal to the required values
-    if (r.isValidField('http_method') && r.getValue('http_method') !== 'GET') { r.http_method = 'GET'; changes.push('http_method'); }
+    if (r.isValidField('http_method') && r.getValue('http_method') !== httpMethod) { r.http_method = httpMethod; changes.push('http_method'); }
     if (r.isValidField('requires_authentication')    && !boolTrue(r.getValue('requires_authentication')))    { r.requires_authentication = true;    changes.push('requires_authentication'); }
     if (r.isValidField('requires_acl_authorization') && !boolTrue(r.getValue('requires_acl_authorization'))) { r.requires_acl_authorization = true; changes.push('requires_acl_authorization'); }
     if (r.isValidField('requires_acl')               && !boolTrue(r.getValue('requires_acl')))               { r.requires_acl = true;               changes.push('requires_acl'); }
@@ -492,7 +493,7 @@ function createResourceOrOperation(defGR, resName, relPath, scriptBody) {
   r.active = true;
 
   // HTTP method
-  if (r.isValidField('http_method')) r.http_method = 'GET';
+  if (r.isValidField('http_method')) r.http_method = httpMethod;
 
   // Security flags — both must be true for ACL enforcement to take effect
   if (r.isValidField('requires_authentication'))    r.requires_authentication    = true;
@@ -580,7 +581,7 @@ var apiDef = getOrCreateScriptedApi(API_NAME, API_ID_VALUE);
 setApiDefaultAcls(apiDef, aclListStr);
 
 // Step 7: Create/find the Resource
-var res = createResourceOrOperation(apiDef, RESOURCE_NAME, RESOURCE_PATH, RESOURCE_SCRIPT);
+var res = createResourceOrOperation(apiDef, RESOURCE_NAME, RESOURCE_PATH, RESOURCE_METHOD, RESOURCE_SCRIPT);
 
 // Step 8: Assign ACLs on the Resource
 setResourceAcls(res, aclListStr);
