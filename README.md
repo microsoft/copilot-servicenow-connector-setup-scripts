@@ -10,6 +10,7 @@ Background scripts that automate the ServiceNow configuration steps required for
 | [row_level_acl_setup.js](row_level_acl_setup.js) | Creates service account, custom role, and row-level READ ACLs for all required tables | [Create service account and set up permissions](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#create-service-account-and-set-up-permissions-to-index-items) / [Grant table access](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge) |
 | [field_level_acl_setup.js](field_level_acl_setup.js) | Creates field-level READ ACLs (`table.*`) for tables where field values are restricted | [Grant field-level access](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/granting-table-access-servicenow-knowledge#grant-field-level-access) |
 | [scripted_rest_api_setup.js](scripted_rest_api_setup.js) | Creates the Scripted REST API endpoint for the Advanced connector flow | [Set up REST API](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#set-up-rest-api) |
+| [incremental_identity_sync_setup.js](incremental_identity_sync_setup.js) | *(Advanced flow only)* Adds the `user_changes` resource for incremental identity sync, grants read access to `sys_audit`/`sys_audit_delete`, and enables table auditing so the connector can detect identity changes between full crawls | [Set up REST API for incremental identity sync](https://learn.microsoft.com/en-us/microsoft-365/copilot/connectors/servicenow-knowledge-admin-setup#set-up-rest-api-for-incremental-identity-sync) |
 
 ## Prerequisites
 
@@ -38,11 +39,12 @@ Background scripts that automate the ServiceNow configuration steps required for
    > **Note:** On Zurich and later releases, the script marks the service account as a machine identity (`identity_type = machine`), which automatically enables "Web service access only". Machine identity accounts cannot be impersonated through the ServiceNow UI — use the REST API to verify access instead.
 3. **`field_level_acl_setup.js`** — Run only if field values are not visible after step 2.
 4. **`scripted_rest_api_setup.js`** — If your ServiceNow instance uses advanced scripts in user criteria (rather than simple user/group-based criteria), you should select the **Advanced** flow when configuring the connector in the Microsoft 365 admin center. Run this script to create the Scripted REST API endpoint that the connector calls to resolve user criteria at query time.
+5. **`incremental_identity_sync_setup.js`** — *(Advanced flow only)* Run after `scripted_rest_api_setup.js` if you want incremental identity sync between full crawls. It adds the `user_changes` resource to the same **Microsoft Copilot** scripted REST API, grants the crawling role read access to `sys_audit` and `sys_audit_delete`, and enables table-level auditing on `sys_user`, `sys_user_has_role`, `sys_user_grmember`, and `user_criteria` so the connector can detect user, role, group, and user-criteria changes.
 
 ## Key Features
 
 - **Idempotent** — Safe to run multiple times. Existing records are reused, not duplicated.
-- **Non-destructive** — Scripts do not modify, delete, or overwrite existing records.
+- **Non-destructive** — Scripts do not delete or overwrite your content. (The incremental identity sync script enables table auditing, which updates the audit configuration of the required tables.)
 - **Self-contained** — No external dependencies or network calls outside your ServiceNow instance.
 - **Cross-version compatible** — Uses `isValidField()` checks to adapt to different ServiceNow releases.
 - **Transparent** — Every action is logged in the output summary for review.
