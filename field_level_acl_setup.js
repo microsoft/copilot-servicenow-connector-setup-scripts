@@ -15,6 +15,25 @@
 // field-level ACL restrictions. This script grants read access to ALL fields (using the `*`
 // wildcard) on the tables where field-level access is needed.
 //
+// IMPORTANT: THIS CAN REMOVE FIELD ACCESS FROM OTHER USERS
+// --------------------------------------------------------
+// A "<table>.*" field read ACL requires the connector role. ServiceNow grants a field read only
+// when an ACL matches OR when NO field ACL exists at all — there is no out-of-the-box "*.*" field
+// read ACL to fall through to. So on a table that has NO pre-existing field-level read ACL:
+//   - BEFORE this script: every user can read the fields (nothing matches, so access is granted).
+//   - AFTER this script: "<table>.*" matches and requires the role, so every user WITHOUT the role
+//     LOSES field read access on that table. Table and field ACLs are AND'd, so row/record access is
+//     unchanged but the field values disappear for those users.
+// Because the ACL sets admin_overrides=true, admins keep access and CANNOT reproduce the failure —
+// verify as a non-admin user or via the REST API.
+// To keep the blast radius minimal:
+//   - TABLES ships EMPTY on purpose. Add ONLY tables where you verified field values are hidden.
+//   - For shared/platform-wide tables (sys_user, sys_user_group, sys_dictionary, sys_properties,
+//     core_company), prefer granular per-field ACLs ("<table>.<field>") over the all-fields
+//     "<table>.*" ACL, so you only touch the fields the connector needs.
+//   - This script warns in its output summary whenever it would create the FIRST field-level read
+//     ACL on a table (the exact case that removes access from other users).
+//
 // WHEN TO USE THIS SCRIPT
 // ------------------------
 // Run this script ONLY if you have already granted row-level access (either manually or via the
@@ -49,23 +68,21 @@ var TARGET_ROLE_NAME = 'copilot_connector';    // Name of the role to link field
 // field values are hidden.
 
 var TABLES = [
-  'kb_knowledge',                  // Knowledge article fields
-  'kb_knowledge_base',             // Knowledge base fields
-  'sys_user',                      // User record fields
-  'sys_user_group',                // User group fields
-  'sys_dictionary',                // Dictionary/schema fields
-  'sys_attachment',                // Attachment fields
-  'sys_properties',                // System property fields (name/value) — required for
-                                   // hierarchical permission evaluation. The connector reads
-                                   // glide.knowman.apply_article_read_criteria and
-                                   // glide.knowman.block_access_with_no_user_criteria. This grants
-                                   // field access to ALL sys_properties fields; if you need to
-                                   // restrict to just these two properties, use the granular
-                                   // per-property ACLs described in the "Set up hierarchical
-                                   // permissions" section of the Learn docs instead.
-  'kb_knowledge_block',            // Knowledge block fields
-  'm2m_kb_knowledge_to_block',     // Article-to-block M2M mapping fields
-  'core_company'                   // Company record fields
+  // EMPTY ON PURPOSE. A field-level ACL is only needed where the service account can see ROWS but
+  // NOT FIELD VALUES, and adding a table here removes field read access from every user without the
+  // connector role (see the IMPORTANT warning in the header). So add ONLY the tables where you
+  // verified the service account cannot read field values — test via the REST API as the service
+  // account, or as a non-admin (admins can't reproduce the restriction). Add one per line, e.g.:
+  //   'kb_knowledge',
+  //   'kb_knowledge_base',
+  //   'kb_knowledge_block',
+  //   'm2m_kb_knowledge_to_block',
+  //   'sys_attachment',
+  //
+  // For shared/platform-wide tables (sys_user, sys_user_group, sys_dictionary, sys_properties,
+  // core_company), prefer creating granular per-field ACLs ("<table>.<field>") by hand for just the
+  // fields the connector needs, rather than listing them here — a "<table>.*" ACL would restrict
+  // EVERY field on those platform-wide tables for all other users.
 ];
 
 // =================================================================================================
@@ -87,6 +104,7 @@ var MARKER = 'AUTO-FIELD-ACL for role=' + TARGET_ROLE_NAME + ' (KB-connector)';
 
 var SUMMARY = {
   role: '',
+  preflight: [],
   aclsCreated: [],
   aclsReused: [],
   tablesSkipped: [],
@@ -183,6 +201,22 @@ function linkAclToRole(aclSysId, roleSysId) {
   return id;
 }
 
+// Pre-flight check (from Rick Shire's Sep 2026 incident): counts field-level READ ACLs already on a
+// table (named "<table>.<field>"), EXCLUDING the "<table>.*" ACL this script manages. When it returns
+// 0, creating "<table>.*" introduces the FIRST field-level read ACL on the table — the exact case
+// that removes field read access for users without the role (ServiceNow has no OOB "*.*" read ACL).
+function countOtherFieldReadAcls(table) {
+  var a = new GlideRecord('sys_security_acl');
+  a.addQuery('type', 'record');
+  a.addQuery('operation', 'read');
+  a.addQuery('name', 'STARTSWITH', table + '.');
+  a.addQuery('name', '!=', table + '.*');
+  a.query();
+  var n = 0;
+  while (a.next()) n++;
+  return n;
+}
+
 function processFieldAcls(tables, roleId) {
   for (var i = 0; i < tables.length; i++) {
     var table = tables[i];
@@ -192,6 +226,13 @@ function processFieldAcls(tables, roleId) {
       if (!tableExistsOnInstance(table)) {
         SUMMARY.tablesSkipped.push(aclName + ' (table not found on this instance)');
         continue;
+      }
+
+      // Pre-flight: warn when "<table>.*" would be the FIRST field-level read ACL on this table.
+      if (countOtherFieldReadAcls(table) === 0) {
+        SUMMARY.preflight.push(table + ' — no pre-existing field-level read ACL; creating "' + aclName +
+          '" removes field read access for users WITHOUT the "' + TARGET_ROLE_NAME + '" role. ' +
+          'Confirm this is intended (test as a non-admin or via REST; admins cannot reproduce it).');
       }
 
       var existingAclId = ourFieldAclAlreadyExists(table);
@@ -240,6 +281,18 @@ try {
 
 gs.print('\n--- Field-Level ACL Setup Summary ---');
 gs.print('Role:  ' + SUMMARY.role);
+
+if (TABLES.length === 0) {
+  gs.warn('\nTABLES is EMPTY — no field-level ACLs were created. This script ships empty on purpose.');
+  gs.warn('Add ONLY the tables where you verified the service account sees rows but not field values');
+  gs.warn('(test via REST as the service account, or as a non-admin), then re-run. See the header warning.');
+}
+
+if (SUMMARY.preflight.length) {
+  gs.warn('\nWARNING — these tables had NO pre-existing field-level read ACL, so creating "<table>.*"');
+  gs.warn('removes field read access from users without the "' + TARGET_ROLE_NAME + '" role:');
+  SUMMARY.preflight.forEach(function(s) { gs.warn('  - ' + s); });
+}
 
 if (SUMMARY.aclsCreated.length) {
   gs.print('\nCreated NEW field-level READ ACLs (table.*):\n  - ' + SUMMARY.aclsCreated.join('\n  - '));
