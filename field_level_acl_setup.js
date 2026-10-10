@@ -24,8 +24,9 @@
 //   - AFTER this script: "<table>.*" matches and requires the role, so every user WITHOUT the role
 //     LOSES field read access on that table. Table and field ACLs are AND'd, so row/record access is
 //     unchanged but the field values disappear for those users.
-// Because the ACL sets admin_overrides=true, admins keep access and CANNOT reproduce the failure —
-// verify as a non-admin user or via the REST API.
+// Because the ACL sets admin_overrides=true, admins keep access and CANNOT reproduce the restriction.
+// Verify as an affected non-admin user who does NOT have the role. The service account also keeps
+// access (it has the role), so it cannot reveal the restriction either.
 // To keep the blast radius minimal:
 //   - TABLES ships EMPTY on purpose. Add ONLY tables where you verified field values are hidden.
 //   - For shared/platform-wide tables (sys_user, sys_user_group, sys_dictionary, sys_properties,
@@ -33,6 +34,8 @@
 //     "<table>.*" ACL, so you only touch the fields the connector needs.
 //   - This script warns in its output summary whenever it would create the FIRST field-level read
 //     ACL on a table (the exact case that removes access from other users).
+//   - DRY_RUN defaults to true: the first run makes NO changes and only reports what it would do,
+//     so you can review the warnings before anything is created. Set DRY_RUN=false to apply.
 //
 // WHEN TO USE THIS SCRIPT
 // ------------------------
@@ -89,6 +92,12 @@ var TABLES = [
 // CONFIGURATION: ACL settings
 // =================================================================================================
 
+var DRY_RUN = true;                // When true (the DEFAULT), the script makes NO changes. It reports
+                                   // the ACLs it would create and flags any table where "<table>.*"
+                                   // would be the FIRST field-level read ACL (which removes field read
+                                   // for users without the role). Review that output, then set
+                                   // DRY_RUN = false and re-run to actually create the ACLs.
+
 var ACL_ORDER    = 50;             // Evaluation order for new ACLs (lower = evaluated earlier).
 
 var FORCE_INSERT = false;          // If true, always create a new ACL even when a marker-tagged
@@ -105,6 +114,7 @@ var MARKER = 'AUTO-FIELD-ACL for role=' + TARGET_ROLE_NAME + ' (KB-connector)';
 var SUMMARY = {
   role: '',
   preflight: [],
+  aclsPlanned: [],
   aclsCreated: [],
   aclsReused: [],
   tablesSkipped: [],
@@ -232,10 +242,22 @@ function processFieldAcls(tables, roleId) {
       if (countOtherFieldReadAcls(table) === 0) {
         SUMMARY.preflight.push(table + ' — no pre-existing field-level read ACL; creating "' + aclName +
           '" removes field read access for users WITHOUT the "' + TARGET_ROLE_NAME + '" role. ' +
-          'Confirm this is intended (test as a non-admin or via REST; admins cannot reproduce it).');
+          'Confirm this is intended (test as an affected non-admin user who lacks the role; the ' +
+          'service account and admins keep access, so they cannot reveal the restriction).');
       }
 
       var existingAclId = ourFieldAclAlreadyExists(table);
+
+      // Dry run: report what would happen and make NO changes.
+      if (DRY_RUN) {
+        if (existingAclId && !FORCE_INSERT) {
+          SUMMARY.aclsReused.push(aclName + ' (' + existingAclId + ') [already exists; no change]');
+        } else {
+          SUMMARY.aclsPlanned.push(aclName + ' (would create and link to "' + TARGET_ROLE_NAME + '")');
+        }
+        continue;
+      }
+
       var aclIdToUse = existingAclId;
 
       if (existingAclId && !FORCE_INSERT) {
@@ -282,6 +304,10 @@ try {
 gs.print('\n--- Field-Level ACL Setup Summary ---');
 gs.print('Role:  ' + SUMMARY.role);
 
+if (DRY_RUN) {
+  gs.warn('\n*** DRY RUN — no changes were made. Review the output below, then set DRY_RUN = false and re-run to apply. ***');
+}
+
 if (TABLES.length === 0) {
   gs.warn('\nTABLES is EMPTY — no field-level ACLs were created. This script ships empty on purpose.');
   gs.warn('Add ONLY the tables where you verified the service account sees rows but not field values');
@@ -294,6 +320,9 @@ if (SUMMARY.preflight.length) {
   SUMMARY.preflight.forEach(function(s) { gs.warn('  - ' + s); });
 }
 
+if (SUMMARY.aclsPlanned.length) {
+  gs.print('\nPlanned field-level READ ACLs (table.*) — NOT created (dry run):\n  - ' + SUMMARY.aclsPlanned.join('\n  - '));
+}
 if (SUMMARY.aclsCreated.length) {
   gs.print('\nCreated NEW field-level READ ACLs (table.*):\n  - ' + SUMMARY.aclsCreated.join('\n  - '));
 }
@@ -306,8 +335,9 @@ if (SUMMARY.tablesSkipped.length) {
 
 if (SUMMARY.errors.length) {
   gs.warn('\nErrors:\n  - ' + SUMMARY.errors.join('\n  - '));
+} else if (DRY_RUN) {
+  gs.print('\nDry run complete — no changes made. Review the warnings above, then set DRY_RUN = false and re-run to apply.');
 } else {
   gs.print('\nAll steps completed successfully. No errors.');
+  gs.print('\nAll field-level ACLs are linked to role "' + TARGET_ROLE_NAME + '".');
 }
-
-gs.print('\nAll field-level ACLs are linked to role "' + TARGET_ROLE_NAME + '".');
